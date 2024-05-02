@@ -6,8 +6,8 @@ Create an S3 Bucket:
 1) Create a new bucket with a unique name.
 2) Upload the `LambdaCode.zip` file to the S3 bucket.
 
-Update Lambda Function:
-1) In the Lambda function code, locate the references to "vatsavcodefile".
+Update "LambdaFunction":
+1) In the "LambdaFunction.yaml", locate the reference to "vatsavcodefile".
 2) Replace "vatsavcodefile" with the newly created S3 bucket
 
 Deployment Steps:
