@@ -1,0 +1,122 @@
+# Specify the AWS CloudFormation version
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Brief description of the template
+Description: Template to create s3 buckets to store Raw and Transformed data
+
+# Define parameters for the template
+Parameters:
+
+  # Provide the name for the S3 bucket to store transformed data
+  S3TransformedBucketNameParameter:
+    Type: String    
+    Description: Provide the name for S3 Bucket to store transformed data
+    Default: "s3-lambda-emr-transformed-data"
+
+  # Provide the name for the S3 bucket to store raw transformed data  
+  S3RawBucketNameParameter:
+    Type: String    
+    Description: Provide the name for S3 Bucket to Raw transformed data
+    Default: "s3-lambda-emr-raw-data"
+
+  #Provide the Environment Name
+  EnvironmentParameter:
+    Description: Env. Name for tagging resources
+    Type: String
+    Default: MyEnvironment 
+  
+  #Provide the Project Name
+  ProjectParameter:
+    Description: Project Name for tagging resources
+    Type: String
+    Default: MyPersonalProject 
+
+# # Define the resources to be created
+Resources:
+
+  # Create an S3 bucket to store transformed data
+  S3TransformedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3TransformedBucketNameParameter
+      AccessControl: Private
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms' 
+              KMSMasterKeyID: !ImportValue "KMS-KeypairStack-KMSKey"  
+      # Block public access to the bucket
+      PublicAccessBlockConfiguration: 
+          BlockPublicAcls: true
+          BlockPublicPolicy: True
+          RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} S3TransformedBucket"
+
+  # Create an S3 bucket to store raw data
+  S3RawBucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+         - "LambdaInvokePermission"
+    Properties:
+      BucketName: !Ref S3RawBucketNameParameter
+      AccessControl: Private
+      # Enable server-side encryption with KMS
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault: 
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !ImportValue 'KMS-KeypairStack-KMSKey'  
+      # Configure event notification for Lambda function
+      NotificationConfiguration: 
+        LambdaConfigurations: 
+          - Event: "s3:ObjectCreated:*"
+            # Filter:
+            #   S3Key:
+            #     Rules: 
+            #       # FilterRule: 
+            #       - Name: "prefix"
+            #         Value: "RawData_"
+            Function: !ImportValue "LambdaTemp-EventBasedLambda"
+            # !ImportValue "LambdaTemp-EventBasedLambda"
+      # Block public access to the bucket
+      PublicAccessBlockConfiguration: 
+          BlockPublicAcls: True
+          BlockPublicPolicy: True
+          RestrictPublicBuckets: True
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} S3RawBucket"
+
+# Define permissions for Lambda function invocation      
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !ImportValue "LambdaTemp-EventBasedLambda"
+      Action: 'lambda:InvokeFunction'
+      Principal: 's3.amazonaws.com'
+      SourceAccount: !Ref 'AWS::AccountId'
+      # SourceArn: !Ref S3RawBucket
+
+
+# Define outputs to provide important information about created resources
+Outputs:
+
+  # Output the ARN of the S3 bucket for transformed data
+  S3TransformedBucketArnOutput:
+    Description: The ARN of the S3 bucket to store transformed data
+    Value: !GetAtt S3TransformedBucket.Arn
+    Export:
+        Name: "S3Temp-S3TransformedBucketArn"
+  
+  # Output the ARN of the S3 bucket for raw data
+  S3RawBucketArnOutput:
+    Description: The ARN of the S3 bucket to store raw data
+    Value: !GetAtt S3RawBucket.Arn
+    Export:
+        Name: "S3Temp-S3RawBucketArn"
