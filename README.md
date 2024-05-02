@@ -1,11 +1,14 @@
 # CloudFormation
 
-#Steps to Follow
+#Steps to Follow:
+
 Create an S3 Bucket:
-Create a new bucket with a unique name.
+1) Create a new bucket with a unique name.
+2) Upload the `LambdaCode.zip` file to the S3 bucket.
+
 Update Lambda Function:
-In the Lambda function code, locate the references to "vatsavcodefile".
-Replace "vatsavcodefile" with the newly created S3 bucket
+1) In the Lambda function code, locate the references to "vatsavcodefile".
+2) Replace "vatsavcodefile" with the newly created S3 bucket
 
 Deployment Steps:
 1) KMS_KeyPair
