@@ -10,6 +10,10 @@ Update "LambdaFunction":
 1) In the "LambdaFunction.yaml", locate the reference to "vatsavcodefile".
 2) Replace "vatsavcodefile" with the newly created S3 bucket
 
+Update VPC:
+1) Find the "ImageId" of the Bastion host in the VPC.
+1) Change the Bastion host AMI ID (ubuntu).
+
 Deployment Steps:
 1) KMS_KeyPair
 2) VPC
