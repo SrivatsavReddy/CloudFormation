@@ -1,0 +1,88 @@
+# Specify the AWS CloudFormation version
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Brief description of the template
+Description: "Template to create roles for Lambda, EMR_Job_Flow, EMR_Service, EMR_Instances, EMR_EC2KeyPair, Bastion_KeyPair"
+
+# Define parameters for the template
+Parameters:
+  # Name of the key pair for EMR EC2 instances
+  EMRKeyPairNameParameter:
+    Description: "The name of the key pair for EMR EC2 instances"
+    Type: String
+    Default: "MyEMRKeyPair"
+
+  # Name of the key pair for the bastion host   
+  BastionKeyPairNameParameter:
+    Description: "The name of the key pair for the bastion host"
+    Type: String
+    Default: "MyBastionKeyPair"
+ 
+  #Provide the Environment Name
+  EnvironmentParameter:
+    Description: "Env. Name for tagging resources"
+    Type: String
+    Default: "MyEnvironment" 
+  
+  #Provide the Project Name
+  ProjectParameter:
+    Description: "Project Name for tagging resources"
+    Type: String
+    Default: "MyPersonalProject" 
+
+# Define the resources to be created    
+Resources:
+# Create an EC2 key pair for EMR instances
+  EMRKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Ref EMRKeyPairNameParameter
+      KeyFormat: pem
+      KeyType: rsa  
+      Tags:
+        - Key: "Environment Name"
+          Value: !Ref EnvironmentParameter
+        - Key: "Project Name"
+          Value: !Sub "${ProjectParameter} EMRKeyPair"
+
+  # Create an EC2 key pair for the bastion host
+  BastionKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Ref BastionKeyPairNameParameter
+      KeyFormat: pem
+      KeyType: rsa  
+      Tags:
+        - Key: "Environment Name"
+          Value: !Ref EnvironmentParameter
+        - Key: "Project Name"
+          Value: !Sub "${ProjectParameter} BastionKeyPair"
+
+  # Create a KMS key for encrypting data          
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for the services using in this template    
+      
+# Define outputs to provide important information about created resources
+Outputs:
+  # Output the name of the key pair for EMR EC2 instances
+  EMRKeyPairARNOutput:
+    Description: The key pair for EMR EC2 instances
+    Value: !Ref EMRKeyPair
+    Export:
+      Name: "KMS-KeypairStack-EMRKeyPair"
+  
+  # Output the name of the key pair for the bastion host
+  BastionKeyPairARNOutput:
+    Description: The key pair for bastion host Instance
+    Value: !Ref BastionKeyPair
+    Export:
+      Name: "KMS-KeypairStack-BastionKeyPair"
+
+  # Output the ARN of the KMS key
+  KMSKeyARNOutput:
+    Description: The ARN of the KMS key
+    Value: !GetAtt KMSKey.Arn
+    Export:
+      Name: "KMS-KeypairStack-KMSKey"
