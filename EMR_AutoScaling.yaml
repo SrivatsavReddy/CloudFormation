@@ -1,0 +1,338 @@
+# Specify the AWS CloudFormation version
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Brief description of the template
+Description: Template to create EMR Clsuter
+
+# Define parameters for the template
+Parameters:
+
+  # Provide the name for the EMR cluster
+  EMRClusterNameParameter:
+    Type: String    
+    Description: Provide the name for EMR cluster
+    Default: "EMR"
+
+  # Select EMR release label
+  EMRReleaseLabelParameter:
+    Type: String
+    Default: emr-6.14.0
+    AllowedValues:
+      - emr-6.14.0
+      - emr-6.10.1
+      - emr-6.3.0
+    Description: Select Runtime for lambda function. Default is emr-6.14.0  
+  
+  # Provide the EBS root volume size for EMR  
+  EMREBSRootVolumeParameter:
+    Type: Number
+    Description: Select EBS root volume size range (15Gib-100Gib). Default is 15 GiB
+    Default: 15
+    MinValue: 15
+    MaxValue: 100    
+    ConstraintDescription: Must be between 15 - 100 (GiB)
+
+   #Provide the EMRJobFlow Role Name
+  EMRJobFlowRoleNameParameter:
+    Description: "Provide name for EMR Jobflow role"
+    Type: String
+    Default: "EMRJobFlowRole"   
+
+  #Provide the EMRService Role Name
+  EMRServiceRoleNameParameter:
+    Description: "Provide name for EMR Service role"
+    Type: String
+    Default: "EMRServiceRole" 
+    
+  #Provide the EMRInstance Role Name
+  EMRInstanceProfileNameParameter:
+    Description: "Provide name for EMR Instance role"
+    Type: String
+    Default: "EMRInstanceProfile"
+
+  #Provide the Environment Name
+  EnvironmentParameter:
+    Description: Env. Name for tagging resources
+    Type: String
+    Default: MyEnvironment 
+  
+  #Provide the Project Name
+  ProjectParameter:
+    Description: Project Name for tagging resources
+    Type: String
+    Default: MyPersonalProject 
+
+# Define the resources to be created
+Resources:
+
+# Create a role for EMR job flow  
+  EMRJobFlowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref EMRJobFlowRoleNameParameter
+      Description: Role for EMR_Job_Flow
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+      - PolicyName: "EMRJobFlowPolicy"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "kms:Encrypt"
+                - "kms:Decrypt"
+                - "kms:GenerateDataKey"
+                - "kms:ReEncrypt*"
+                - "kms:CreateGrant"
+                - "kms:GenerateDataKeyWithoutPlaintext"
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+              Resource: !Sub 'arn:aws:s3:::s3-lambda-emr-raw-data/*'
+            - Effect: Allow
+              Action:
+                - 's3:PutObject'
+              Resource: !Sub 'arn:aws:s3:::s3-lambda-emr-transformed-data/*'
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:aws/EMRlog-group:aws/EMR:log-stream:Jobflow'
+      
+  # Create Instance profile
+  EmrJobFlowInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Ref EMRInstanceProfileNameParameter
+      Roles:
+        - !Ref EMRJobFlowRole
+
+  # Create a role for EMR service  
+  EMRServiceRole:
+    Type: AWS::IAM::Role    
+    Properties:
+      RoleName: !Ref EMRServiceRoleNameParameter
+      Description: Role for EMR_Service
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticmapreduce.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+      - PolicyName: "KMSAccessPolicy"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "kms:Encrypt"
+                - "kms:Decrypt"
+                - "kms:GenerateDataKey"                
+                - "kms:ReEncrypt*"
+                - "kms:CreateGrant"
+                - "kms:GenerateDataKeyWithoutPlaintext"
+                - "kms:DescribeKey"
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - ec2:StartInstances
+                - ec2:TerminateInstances 
+                - ec2:DescribeSubnets                 
+              Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            - Effect: Allow
+              Action: 
+                - ec2:DescribeSubnets                 
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricAlarm
+                - cloudwatch:DescribeAlarms
+                - cloudwatch:GetMetricData
+              Resource: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:metric/EMRMetric"
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:aws/EMRlog-group:aws/EMR:log-stream:Service-role'
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} EMRServiceRole"
+
+  EMRAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EMR_AutoScaling_DefaultRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - elasticmapreduce.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: "KMSAccessPolicy"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "elasticmapreduce:ListInstanceGroups"
+                - "elasticmapreduce:ModifyInstanceGroups"
+                - "cloudwatch:PutMetricAlarm"
+                - "cloudwatch:DescribeAlarms"
+                - "cloudwatch:DeleteAlarms"
+              Resource: "*"      
+      Tags:
+        - Key: Name
+          Value: EMR_AutoScaling_DefaultRole
+   
+  # Create an EMR cluster
+  EMRCluster:
+    Type: AWS::EMR::Cluster
+    Properties:
+      Name: !Ref EMRClusterNameParameter
+      ReleaseLabel: !Ref EMRReleaseLabelParameter
+      JobFlowRole: !Ref EmrJobFlowInstanceProfile
+      AutoScalingRole: !Ref EMRAutoScalingRole
+      ServiceRole: !Ref EMRServiceRole
+      #EbsRootVolumeIops: 2500 only for emr-6.15.0 and latter
+      EbsRootVolumeSize: !Ref EMREBSRootVolumeParameter
+      #EbsRootVolumeThroughput: 200 2500 only for emr-6.15.0 and latter
+      LogEncryptionKmsKeyId: !ImportValue "KMS-KeypairStack-KMSKey"
+      LogUri: s3://vatsavcodefile/logs/
+      VisibleToAllUsers: True
+      Applications: 
+        - Name: Hadoop
+        - Name: Spark
+      Instances:
+        EmrManagedMasterSecurityGroup: !ImportValue "VPCTemp-EMRMasterSecurityGroup"
+        EmrManagedSlaveSecurityGroup: !ImportValue "VPCTemp-EMRCoreSecurityGroup" 
+        ServiceAccessSecurityGroup: !ImportValue "VPCTemp-ServiceAccessSecurityGroup"
+        KeepJobFlowAliveWhenNoSteps: True
+        Ec2KeyName: !ImportValue "KMS-KeypairStack-EMRKeyPair"
+        Ec2SubnetId: !ImportValue "VPCTemp-EMRPrivateSubnetId"
+            # - !ImportValue "VPCTemp-EMRPrivateSubnetId"
+        CoreInstanceGroup:
+          Name: MyCoreNodes
+          InstanceCount: 2
+          InstanceType: m5.xlarge
+          Market: ON_DEMAND
+          # Define auto-scaling policy for the core instance group
+          AutoScalingPolicy: 
+            Constraints: 
+              MaxCapacity: 4
+              MinCapacity: 2
+            Rules:
+              - Name: ScaleUp 
+                Action:
+                  SimpleScalingPolicyConfiguration: 
+                    AdjustmentType: CHANGE_IN_CAPACITY
+                    ScalingAdjustment: 1                  
+                Trigger: 
+                  CloudWatchAlarmDefinition: 
+                    ComparisonOperator: GREATER_THAN
+                    EvaluationPeriods: 5 
+                    MetricName: YARNMemoryAvailablePercentage
+                    Namespace: AWS/ElasticMapReduce
+                    Period: 300 
+                    Statistic: AVERAGE
+                    Threshold: 60
+                    Unit: PERCENT
+              - Name: ScaleDown 
+                Action:
+                  SimpleScalingPolicyConfiguration: 
+                    AdjustmentType: CHANGE_IN_CAPACITY
+                    ScalingAdjustment: -1                  
+                Trigger: 
+                  CloudWatchAlarmDefinition: 
+                    ComparisonOperator: LESS_THAN
+                    EvaluationPeriods: 5 
+                    MetricName: YARNMemoryAvailablePercentage
+                    #MetricName: YARNMemoryAvailablePercentage
+                    Namespace: AWS/ElasticMapReduce
+                    Period: 300 
+                    Statistic: AVERAGE
+                    Threshold: 40
+                    Unit: PERCENT
+          EbsConfiguration: 
+            EbsBlockDeviceConfigs: 
+              - VolumeSpecification: 
+                  Iops: 3000
+                  SizeInGB: !Ref EMREBSRootVolumeParameter
+                  Throughput: 200
+                  VolumeType: gp3
+                VolumesPerInstance: 1
+            EbsOptimized: True
+        MasterInstanceGroup: 
+          Name: MyMasterNode
+          InstanceCount: 1
+          InstanceType: m5.xlarge
+          Market: ON_DEMAND
+          # Define EBS configuration for the master instance group
+          EbsConfiguration: 
+            EbsBlockDeviceConfigs: 
+              - VolumeSpecification: 
+                  Iops: 3000
+                  SizeInGB: !Ref EMREBSRootVolumeParameter
+                  Throughput: 200
+                  VolumeType: gp3
+                VolumesPerInstance: 1
+            EbsOptimized: True
+        TerminationProtected: False 
+        UnhealthyNodeReplacement: False    
+      # Set the concurrency level for EMR steps
+      # StepConcurrencyLevel: 1 
+      # Define EMR steps here
+      # AutoTerminationPolicy: 
+      #   IdleTimeout: 3600 (Set idle timeout for auto-termination)
+      # Add tags to the EMR cluster
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} EMR"
+
+# Define outputs to provide important information about the EMR cluster and its related resources
+Outputs:
+
+  EMRAutoScalingRoleArn:
+    Description: The ARN of the AutoScaling role for EMR
+    Value: !GetAtt EMRAutoScalingRole.Arn
+
+  # Output the ID of the EMR cluster
+  EMRClusterArnOutput:
+    Description: The ARN of the EMR cluster.
+    Value: !Ref EMRCluster
+    Export:
+      Name: "EMRTemp-EMRCluser"
+
+  # Output the role ARN of the EMR job flow role
+  EMRJobFlowRoleArnOutput:
+    Description: The ARN of the IAM role for the EMR job flow.
+    Value: !GetAtt EMRJobFlowRole.Arn
+    Export:
+      Name: "EMRTemp-EMRJobFlowRoleArn"
+  
+  # Output the role ARN of the EMR service role
+  EMRServiceRoleArnOutput:
+    Description: The ARN of the IAM role for the EMR service.
+    Value: !GetAtt EMRServiceRole.Arn
+    Export:
+      Name: "EMRTemp-EMRServiceRoleArn"
+
