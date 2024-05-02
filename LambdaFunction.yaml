@@ -1,0 +1,236 @@
+
+# Specify the AWS CloudFormation version
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Brief description of the template
+Description: Template to create Lambda function, which when triggered by s3 events creates a cluster
+
+# Define parameters for the template
+Parameters:
+
+  LambdaRoleNameParameter:
+    Description: "Provide name for lambda role"
+    Type: String
+    Default: "LambdaRole" 
+
+  # Provide the name for the Lambda DLQ 
+  LambdaDLQNameParameter:
+    Type: String    
+    Description: Provide the name for Lambda DLQ 
+    Default: "LambdaDLQ"
+
+  # Provide the name for the Lambda function
+  LambdaFunctionNameParameter:
+    Type: String    
+    Description: Provide the name for Lambda Function
+    Default: "LambdaFunction"
+
+  # Select architecture for the Lambda function
+  LambdaArchitectureParameter:
+    Type: String
+    Description: Select Architecture for lambda function. Default is x86_64.
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+      - m1.large     
+  
+  # Provide the ephemeral storage size for the Lambda function  
+  LambdaEphemeralStorageSizeParameter:
+    Type: Number
+    Description: Provide ephemeral storage in MB. Default is 128MB
+    Default: 512
+    MinValue: 512
+    MaxValue: 10240
+    ConstraintDescription: Must be a number between 128 and 10240 MB and a multiple of 128 MB  
+  
+  # Provide the memory size for the Lambda function  
+  LambdaMemorySizeParameter:
+    Type: Number
+    Description: Provide memory size in MB. Default is 128MB
+    Default: 128
+    MinValue: 128
+    MaxValue: 10240
+    ConstraintDescription: Must be a number between 128 and 10240 MB and a multiple of 128 MB
+  
+  # Select runtime for the Lambda function  
+  LambdaRuntimeParameter:
+    Type: String
+    Default: python3.9
+    AllowedValues:
+      - python3.6
+      - python3.7
+      - python3.8
+      - python3.9
+    Description: Select Runtime for lambda function. Default is python3.6
+
+#Provide the Environment Name
+  EnvironmentParameter:
+    Description: Env. Name for tagging resources
+    Type: String
+    Default: MyEnvironment 
+  
+  #Provide the Project Name
+  ProjectParameter:
+    Description: Project Name for tagging resources
+    Type: String
+    Default: MyPersonalProject 
+    
+# Define conditions for resources or parameters 
+Conditions:
+  # Ensure Lambda ephemeral storage size is a multiple of 128
+  LambdaEphemeralStorageSizeCondition:
+    Fn::Equals:
+      - !Sub "${LambdaEphemeralStorageSizeParameter} % 512"
+      - 0
+  
+  # Ensure Lambda memory size is a multiple of 128
+  LambdaMemorySizeCondition:
+    Fn::Equals:
+      - !Sub "${LambdaMemorySizeParameter} % 128"
+      - 0
+
+# Define the resources to be created
+Resources:
+# Create a role for Lambda functions  
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref LambdaRoleNameParameter
+      Description: Role to invoke lambda and to start EMR cluster
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 
+                - 'lambda.amazonaws.com'       
+            Action: sts:AssumeRole
+      # Define policies for the Lambda role      
+      Policies: 
+        - PolicyName: 'LogAccessPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:aws/lambda:Log-stream:${LambdaFunctionNameParameter}'
+        - PolicyName: 'EMRStartPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 
+                  - 'elasticmapreduce:RunJobFlow'
+                  - 'elasticmapreduce:TerminateJobFlows'
+                  - 'elasticmapreduce:AddJobFlowSteps'
+                  - 'elasticmapreduce:CancelSteps'
+                Resource: !Sub 'arn:aws:elasticmapreduce:${AWS::Region}:${AWS::AccountId}:cluster/*'
+                Condition:
+                  StringLike:
+                    ec2:ResourceTag/ProjectName: !Ref ProjectParameter
+              # SQS SendMessage permission
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt LambdaDLQ.Arn
+              # EC2 network interface permissions
+              - Effect: Allow
+                Action:
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:DescribeNetworkInterfaces'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ec2:DescribeSubnets'
+                  - 'ec2:DescribeSecurityGroups'
+                  - 'ec2:DescribeVpcs'
+                Resource: '*'                  
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} LambdaRole"
+
+  # Create a DLQ for Lambda function
+  LambdaDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref LambdaDLQNameParameter
+      KmsDataKeyReusePeriodSeconds: 7200
+      KmsMasterKeyId: !ImportValue 'KMS-KeypairStack-KMSKey' 
+      MessageRetentionPeriod: 1209600 # (14days retention)      
+      SqsManagedSseEnabled: false
+      Tags: 
+      - Key: Environment Name
+        Value: !Ref EnvironmentParameter
+      - Key: Project Name
+        Value: !Sub "${ProjectParameter} LambdaRole"
+
+  # Create a Lambda function for event-based processing
+  EventBasedLambda:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Ref LambdaFunctionNameParameter
+      Description: "Lambda function used to create EMR cluster once triggered"
+      Architectures: [!Ref LambdaArchitectureParameter]
+      Role: !GetAtt LambdaRole.Arn
+      # Specify the KMS key ARN for encryption
+      KmsKeyArn: !ImportValue "KMS-KeypairStack-KMSKey"
+      # Specify ephemeral storage size for the Lambda function
+      EphemeralStorage: 
+        Size: !If [LambdaEphemeralStorageSizeCondition, !Ref LambdaEphemeralStorageSizeParameter, 512]     
+      # Specify Lambda function code
+      Code:
+        # Path to the Lambda function code (e.g., S3 location)
+        S3Bucket: 'vatsavcodefile'
+        S3Key: 'LambdaCode.zip'
+      Handler: S3LambdaEMR.lambda_handler      
+      # Configure Dead Letter Queue (DLQ)
+      DeadLetterConfig: 
+        TargetArn: !GetAtt LambdaDLQ.Arn      
+      # Configure logging for the Lambda function
+      LoggingConfig: 
+          LogFormat: JSON
+          LogGroup: !Sub lambda/${LambdaFunctionNameParameter}/
+      # Define Lambda function properties
+      MemorySize: !If [LambdaMemorySizeCondition, !Ref LambdaMemorySizeParameter, 128] # 128 - 10240 MB
+      ReservedConcurrentExecutions: 0
+      Runtime: !Ref LambdaRuntimeParameter    
+      Timeout: 900
+      # Define VPC configuration for the Lambda function
+      VpcConfig: 
+          SecurityGroupIds: 
+            - !ImportValue "VPCTemp-LambdaSecurityGroup"
+          SubnetIds:
+            - !ImportValue "VPCTemp-LambdaPrivateSubnetId"
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Lambda"
+
+# Define outputs to provide important information about the Lambda function and its related resources
+Outputs:
+
+  # Output the ARN of the DLQ
+  LambdaDLQArnOutput:
+    Description: The ARN of the Lambda DLQ.
+    Value: !GetAtt LambdaDLQ.Arn
+    Export:
+      Name: "LambdaTemp-LambdaDLQArn"
+
+  # Output the role ARN for the Lambda role
+  LambdaRoleARNOutput:
+    Description: The ARN of the IAM role for Lambda functions
+    Value: !GetAtt LambdaRole.Arn
+    Export:
+      Name: "RolesStackName-LambdaRoleARN"
+
+  # Output the role ARN for the Lambda function
+  EventBasedLambdaArnOutput:
+    Description: The ARN of the IAM role for the Lambda function.
+    Value: !GetAtt EventBasedLambda.Arn
+    Export:
+      Name: "LambdaTemp-EventBasedLambda"
+
