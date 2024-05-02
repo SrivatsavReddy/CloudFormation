@@ -1,0 +1,583 @@
+# Specify the AWS CloudFormation version
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Brief description of the template
+Description: Template to create VPC
+
+# Define parameters for the template
+Parameters:
+
+  MyIP:
+    Description: Your IP address (1.1.1.1/32) for SSH and Lambda access.
+    Type: String
+    Default: '10.0.0.36/24'
+
+  # Define the IP range (CIDR notation) for the VPC
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+  # Define IP range for the first public subnet in the first Availability Zone
+  PublicSubnetCIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.0.0/24
+
+  # # Define IP range for the second public subnet in the second Availability Zone
+  # PublicSubnet2CIDR:
+  #   Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+  #   Type: String
+  #   Default: 10.0.1.0/24
+
+  # Define IP range for the first private subnet in the first Availability Zone
+  LambdaPrivateSubnetCIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.0.2.0/24
+
+# Define IP range for the second private subnet in the second Availability Zone
+  EMRPrivateSubnetCIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.0.3.0/24
+
+  # CIDR range for the security group rules
+  # SecurityGroupCIDR:
+  #   Description: CIDR range for the security group rules
+  #   Type: String 
+  #   Default: 0.0.0.0/0
+
+  # Instance type for the bastion host  
+  BastionInstanceType:
+    Description: The instance type for the bastion host
+    Type: String
+    Default: t2.micro
+
+  #Provide the Environment Name
+  EnvironmentParameter:
+    Description: Env. Name for tagging resources
+    Type: String
+    Default: MyEnvironment 
+  
+  #Provide the Project Name
+  ProjectParameter:
+    Description: Project Name for tagging resources
+    Type: String
+    Default: MyPersonalProject   
+
+# Define the resources to be created
+Resources:
+  # Create a VPC
+  VPC: 
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} VPC"
+
+  # Create the first public subnet          
+  PublicSubnet: 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AssignIpv6AddressOnCreation: false
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetCIDR
+      MapPublicIpOnLaunch: True
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Public Subnet (AZ1)"
+
+  # Create the first private subnet
+  LambdaPrivateSubnet: #LambdaPrivateSubnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AssignIpv6AddressOnCreation: false
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: !Ref LambdaPrivateSubnetCIDR
+      MapPublicIpOnLaunch: False
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Private Subnet (AZ1)"
+  
+  # Create the second private subnet
+  EMRPrivateSubnet: #EMRPrivateSubnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AssignIpv6AddressOnCreation: false
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: !Ref EMRPrivateSubnetCIDR
+      MapPublicIpOnLaunch: False
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Private Subnet (AZ2)"
+    
+  # Create an internet gateway          
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} InternetGateway"
+
+  # Attach the internet gateway to the VPC          
+  InternetGatewayAttachment: 
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Create a public route table
+  PublicRouteTable: 
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Public Route Table"
+
+  # Create a private route table for the first Availability Zone
+  LambdaPrivateRouteTable: #LambdaRouteTable
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Private Routes (AZ1)"
+  
+  # Create a private route table for the second Availability Zone
+  EMRPrivateRouteTable: #EMRRouteTable
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Private Routes (AZ2)"  
+
+  # Create a public route
+  PublicRoute: 
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway  
+
+  # Create a private route for the first Availability Zone
+  LambdaPrivateRoute: 
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref LambdaPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  
+  # Create a private route for the second Availability Zone
+  EMRPrivateRoute: 
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref EMRPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # Associate the public route table with the first public subnet    
+  PublicSubnetRouteTableAssociation: 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+  
+  # Associate the private route table with the first private subnet
+  LambdaPrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref LambdaPrivateRouteTable
+      SubnetId: !Ref LambdaPrivateSubnet
+
+  # Associate the private route table with the second private subnet
+  EMRPrivateSubnetRouteTableAssociation:  
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref EMRPrivateRouteTable
+      SubnetId: !Ref EMRPrivateSubnet
+
+  # Create the first NAT gateway
+  NatGateway: 
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      ConnectivityType: public
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} NATGateway (AZ1)"
+
+  # Create Elastic IP for the first NAT gateway
+  NatGatewayEIP: 
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} NatGatewayEIP"
+  
+  # Create a bastion host EC2 instance
+  BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref BastionInstanceType
+      KeyName: !ImportValue "KMS-KeypairStack-BastionKeyPair"
+      ImageId: ami-09040d770ffe2224f 
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} BastionHost"
+
+  # Create a public network ACL        
+  PublicNetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} PublicNetworkAcl"
+  
+  # Create a private network ACL
+  LambdaPrivateNetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} Lambda PrivateNetworkAcl"
+
+  # Create a private network ACL
+  EMRPrivateNetworkAcl:
+    Type: 'AWS::EC2::NetworkAcl'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Environment Name
+          Value: !Ref EnvironmentParameter
+        - Key: Project Name
+          Value: !Sub "${ProjectParameter} EMR PrivateNetworkAcl"
+  
+  # Network ACL Rules for Public Subnet
+  PublicAclIngressRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref 'MyIP'
+      PortRange:
+        From: 0
+        To: 65535
+
+  PublicAclEgressRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: 0
+        To: 65535
+
+  # Network ACL Rules for Lambda Private Subnet
+  LambdaAclIngressRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref LambdaPrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref 'MyIP'
+      PortRange:
+        From: 0
+        To: 65535
+
+  LambdaAclEgressRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref LambdaPrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: 0
+        To: 65535
+
+  # Network ACL Rules for EMR Private Subnet
+  EMRAclIngressRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref EMRPrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref 'MyIP'
+      PortRange:
+        From: 0
+        To: 65535
+
+  EMRAclEgressRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref EMRPrivateNetworkAcl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: '0.0.0.0/0'
+      PortRange:
+        From: 0
+        To: 65535
+
+  # Associate the public network ACL with the first public subnet
+  AssociatePublicSubnetAcl:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      NetworkAclId: !Ref PublicNetworkAcl
+  
+  # Associate the private network ACL with the first private subnet
+  AssociateLambdaPrivateSubnetAcl:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref LambdaPrivateSubnet
+      NetworkAclId: !Ref LambdaPrivateNetworkAcl
+  
+  # Associate the private network ACL with the second private subnet
+  AssociateEMRPrivateSubnetAcl:
+    Type: 'AWS::EC2::SubnetNetworkAclAssociation'
+    Properties:
+      SubnetId: !Ref EMRPrivateSubnet
+      NetworkAclId: !Ref EMRPrivateNetworkAcl
+  
+  # Bastion Security Group
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the Bastion Host
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: !Ref 'MyIP'
+
+  # Lambda Security Group
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the Lambda function
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref MyIP
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: !Ref 'MyIP'
+
+  # EMR Master Security Group
+  EMRMasterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EMR master instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+        - IpProtocol: tcp
+          FromPort: 8088
+          ToPort: 8088
+          CidrIp: !Ref 'MyIP' # Spark Web UI
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref 'MyIP' # Hadoop-related traffic
+
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: '0.0.0.0/0'
+  
+  # EMR Core and Task Security Group
+  EMRCoreSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the EMR core and task instances
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+        - IpProtocol: tcp
+          FromPort: 8088
+          ToPort: 8088
+          CidrIp: !Ref 'MyIP' # Spark Web UI
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref 'MyIP' # Hadoop-related traffic
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: '0.0.0.0/0'
+
+    # Service Access Security Group
+  ServiceAccessSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for service access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+        # - IpProtocol: tcp
+        #     FromPort: 9443
+        #     ToPort: 9443
+        #     SourceSecurityGroupId: !Ref SecurityGroup
+        - IpProtocol: tcp
+          FromPort: 8088
+          ToPort: 8088
+          CidrIp: !Ref 'MyIP'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: '0.0.0.0/0'
+
+  # S3 Gateway Endpoint
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcId: !Ref VPC
+      RouteTableIds:
+        - !Ref LambdaPrivateRouteTable
+        - !Ref EMRPrivateRouteTable
+
+# Define outputs to provide important information about created resources
+Outputs:
+  # Output the VPC ID
+  VPCIdOutput:
+    Description: The VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: "VPCTemp-VPCId"
+  
+  # Output the ID of the first public subnet
+  PublicSubnetIdOutput:
+    Description: The ID of the first public subnet
+    Value: !Ref PublicSubnet
+    Export:
+      Name: "VPCTemp-PublicSubnetId"
+  
+  
+  # Output the ID of the first private subnet
+  LambdaPrivateSubnetIdOutput:
+    Description: The ID of the first private subnet
+    Value: !Ref LambdaPrivateSubnet
+    Export:
+      Name: "VPCTemp-LambdaPrivateSubnetId"
+  
+  # Output the ID of the second private subnet
+  EMRPrivateSubnetIdOutput:
+    Description: The ID of the second private subnet
+    Value: !Ref EMRPrivateSubnet
+    Export:
+      Name: "VPCTemp-EMRPrivateSubnetId"
+  
+  # Output the public IP of the bastion host
+  BastionHostPublicIPOutput:
+    Description: Public IP of the Bastion Host
+    Value: !GetAtt BastionHost.PublicIp
+    Export:
+      Name: "VPCTemp-BastionHostPublicIP"
+
+  # Output the Bastion Security group ID
+  BastionSecurityGroup:
+    Description: Bastion SecurityGroup for your VPC
+    Value: !Ref BastionSecurityGroup
+    Export:
+        Name: "VPCTemp-BastionSecurityGroup"      
+
+  # Output the Lambda Security group ID
+  LambdaSecurityGroup:
+    Description: Lambda SecurityGroup for your VPC
+    Value: !Ref LambdaSecurityGroup
+    Export:
+        Name: "VPCTemp-LambdaSecurityGroup"
+
+  # Output the EMR Master Security group ID
+  EMRMasterSecurityGroup:
+    Description: EMRMaster SecurityGroup for your VPC
+    Value: !Ref EMRMasterSecurityGroup
+    Export:
+        Name: "VPCTemp-EMRMasterSecurityGroup"
+
+  # Output the EMR Core Security group ID
+  EMRCoreSecurityGroupOutput:
+    Description: EMRCore SecurityGroup for your VPC
+    Value: !Ref EMRCoreSecurityGroup
+    Export:
+        Name: "VPCTemp-EMRCoreSecurityGroup"
+
+  # Output the ServiceAccessSGOutput
+  ServiceAccessSGOutput:
+    Description: Security group for your VPC
+    Value: !Ref ServiceAccessSecurityGroup
+    Export:
+        Name: "VPCTemp-ServiceAccessSecurityGroup"
+
